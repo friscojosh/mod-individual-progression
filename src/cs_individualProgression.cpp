@@ -46,7 +46,15 @@ public:
 
         Player* target = player->GetConnectedPlayer();
         if (!target)
+        {
             handler->PSendSysMessage("Player |cff00ffff{}|r is not online.", player->GetName());
+            return nullptr;
+        }
+
+        // Not on an account above your own (it says so itself), as the core's commands that act on another player.
+        if (handler->HasLowerSecurity(target))
+            return nullptr;
+
         return target;
     }
 
