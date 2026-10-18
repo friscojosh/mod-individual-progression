@@ -32,6 +32,24 @@ public:
         return commandTable;
     }
 
+    // The named player, else the target, else yourself; null (after saying why) if there is none or they are offline.
+    static Player* OnlineTargetOrSelf(ChatHandler* handler, Optional<PlayerIdentifier>& player)
+    {
+        if (!player)
+            player = PlayerIdentifier::FromTargetOrSelf(handler);
+
+        if (!player)
+        {
+            handler->SendSysMessage("Player not found.");
+            return nullptr;
+        }
+
+        Player* target = player->GetConnectedPlayer();
+        if (!target)
+            handler->PSendSysMessage("Player |cff00ffff{}|r is not online.", player->GetName());
+        return target;
+    }
+
     static void CheckProgressionAchievements(Player* target, uint8 currentState, uint32 progressionLevel)
     {
         if (!currentState || (!progressionLevel && progressionLevel != 0) || !target || !target->IsInWorld())
@@ -101,8 +119,10 @@ public:
             return false;
         }
 
-        player = PlayerIdentifier::FromTargetOrSelf(handler);
-        Player* target = player->GetConnectedPlayer();
+        Player* target = OnlineTargetOrSelf(handler, player);
+        if (!target)
+            return false;
+
         std::string playername = target->GetName();
         uint8 currentState = sIndividualProgression->GetPlayerProgressionFromQuests(target);
         uint32 currentArea = target->GetAreaId();
@@ -121,7 +141,7 @@ public:
 
     static bool HandleSetBotIndividualProgressionCommand(ChatHandler* handler)
     {
-        Player* player = handler->GetSession()->GetPlayer();
+        Player* player = handler->GetPlayer();   // null from the console
 
         if (!player)
         {
@@ -158,9 +178,9 @@ public:
 
     static bool HandleSetRepIndividualProgressionCommand(ChatHandler* handler)
     {
-        Player* player = handler->GetSession()->GetPlayer();
-        uint32 accountId = handler->GetSession()->GetAccountId();
-        
+        Player* player = handler->GetPlayer();   // null from the console
+        uint32 accountId = player ? player->GetSession()->GetAccountId() : 0;
+
         if (!player || !accountId)
             return false;
 
@@ -338,8 +358,10 @@ public:
             return false;
         }
 
-        player = PlayerIdentifier::FromTargetOrSelf(handler);
-        Player* target = player->GetConnectedPlayer();
+        Player* target = OnlineTargetOrSelf(handler, player);
+        if (!target)
+            return false;
+
         uint32 progressionLevel = sIndividualProgression->GetPlayerProgressionFromQuests(target);
         std::string playername = target->GetName();
 
@@ -405,7 +427,7 @@ public:
 
     static bool HandleAttuneIndividualProgressionCommand(ChatHandler* handler, std::string location)
     {
-        Player* player = handler->GetSession()->GetPlayer();
+        Player* player = handler->GetPlayer();   // null from the console
 
         if (!player)
         {
