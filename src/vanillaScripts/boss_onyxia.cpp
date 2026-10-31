@@ -147,6 +147,8 @@ public:
         {
             events.Reset();
             Phase = ph;
+            // AzBots sub-state (see GetData): 0 none, 1 ground, 2 air, 3 landing transit.
+            _azSubState = ph == PHASE_GROUNDED ? 1 : ph == PHASE_AIRPHASE ? 2 : ph == PHASE_LANDED ? 3 : 0;
             switch (ph)
             {
                 case PHASE_GROUNDED:
@@ -422,6 +424,7 @@ public:
                     me->SendMeleeAttackStop(me->GetVictim());
                     me->GetMotionMaster()->MoveLand(13, OnyxiaMoveData[0].x + 1.0f, OnyxiaMoveData[0].y, OnyxiaMoveData[0].z, 12.0f);
                     DoResetThreatList();
+                    _azSubState = 4;  // AzBots: threat reset, descending
                     break;
                 }
                 case EVENT_SPELL_FIREBALL_FIRST:
@@ -502,6 +505,7 @@ public:
                 case EVENT_PHASE_3_ATTACK:
                 {
                     me->SetReactState(REACT_AGGRESSIVE);
+                    _azSubState = 5;  // AzBots: aggressive again, attacks her highest threat
 
                     if (Unit* target = SelectTarget(SelectTargetMethod::MaxThreat, 0, 0, false))
                     {
@@ -554,9 +558,22 @@ public:
             }
         }
 
+        // AzBots phase sub-states (party phase 3b, wowdecomp-party design 2026-10-31-party-encounters-3b-design.md
+        // section 2.8): GetData(0) = 1 ground (phase 1), 2 air (from the 65% transition), 3 landing transit (from the
+        // 40% transition), 4 threat reset (EVENT_LAND: DoResetThreatList and the descent), 5 aggressive
+        // (EVENT_PHASE_3_ATTACK); 0 out of combat. Bots run the same transitions from observation when this is
+        // absent. No behaviour changes.
+        uint32 GetData(uint32 type) const override
+        {
+            if (type == 0)
+                return _azSubState;
+            return 0;
+        }
+
     private:
         uint8 Phase;
         int8  CurrentWP;
+        uint8 _azSubState = 0;
 
         bool  whelpSpam;
         uint8 whelpCount;

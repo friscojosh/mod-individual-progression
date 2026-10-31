@@ -15,6 +15,7 @@
  * with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "GameTime.h"
 #include "Player.h"
 #include "ScriptMgr.h"
 #include "ScriptedCreature.h"
@@ -203,8 +204,41 @@ public:
             if (spellInfo->Id == SPELL_ICEBOLT_CAST)
             {
                 me->CastSpell(target, SPELL_ICEBOLT_TRIGGER, true);
+                if (_azBoltsInFlight)
+                    --_azBoltsInFlight;  // AzBots: this bolt has impacted
             }
         }
+
+        // AzBots air-phase observations (party phase 3b, wowdecomp-party design
+        // 2026-10-31-party-encounters-3b-design.md sections 2.8 and 10). GetData(28526) = icebolts that can still
+        // land this air phase: bolts not yet cast (until Frost Missile) plus bolts cast and not yet impacted
+        // (decremented in SpellHitTarget, not at cast start). GetData(30101) = milliseconds since Frost Missile PLUS
+        // ONE (0 = not cast this air phase). GetData(28524) = milliseconds until the Frost Explosion PLUS ONE
+        // (0 = none scheduled). No behaviour changes.
+        uint32 GetData(uint32 type) const override
+        {
+            switch (type)
+            {
+                case SPELL_ICEBOLT_CAST:
+                    return (_azFrostMissileAt == Milliseconds::zero() ? iceboltCount : 0) + _azBoltsInFlight;
+                case SPELL_FROST_MISSILE:
+                    if (_azFrostMissileAt == Milliseconds::zero())
+                        return 0;
+                    return uint32(std::max<int64>((GameTime::GetGameTimeMS() - _azFrostMissileAt).count(), 0)) + 1;
+                case SPELL_FROST_EXPLOSION:
+                {
+                    Milliseconds const until = events.GetTimeUntilEvent(EVENT_FLIGHT_SPELL_EXPLOSION);
+                    if (until == Milliseconds::max())
+                        return 0;
+                    return uint32(std::max<int64>(until.count(), 0)) + 1;
+                }
+                default:
+                    return 0;
+            }
+        }
+
+        uint8 _azBoltsInFlight{};
+        Milliseconds _azFrostMissileAt = Milliseconds::zero();
 
         bool IsValidExplosionTarget(WorldObject* target)
         {
@@ -318,6 +352,8 @@ public:
                     me->HandleEmoteCommand(EMOTE_ONESHOT_LIFTOFF);
                     events.ScheduleEvent(EVENT_FLIGHT_ICEBOLT, 3s);
                     iceboltCount = 3;
+                    _azBoltsInFlight = 0;
+                    _azFrostMissileAt = Milliseconds::zero();
                     return;
                 case EVENT_FLIGHT_ICEBOLT:
                     {
@@ -359,6 +395,7 @@ public:
                             auto itr = targets.begin();
                             advance(itr, urand(0, targets.size() - 1));
                             me->CastSpell(*itr, SPELL_ICEBOLT_CAST, false);
+                            ++_azBoltsInFlight;
                             blockList.push_back((*itr)->GetGUID());
                             currentTarget = (*itr)->GetGUID();
                             --iceboltCount;
@@ -374,6 +411,7 @@ public:
                     currentTarget.Clear();
                     Talk(EMOTE_BREATH);
                     me->CastSpell(me, SPELL_FROST_MISSILE, false);
+                    _azFrostMissileAt = GameTime::GetGameTimeMS();
                     events.ScheduleEvent(EVENT_FLIGHT_SPELL_EXPLOSION, 8500ms);
                     return;
                 case EVENT_FLIGHT_SPELL_EXPLOSION:
@@ -393,6 +431,8 @@ public:
                     }
                     blockList.clear();
                     me->RemoveAllGameObjects();
+                    _azBoltsInFlight = 0;
+                    _azFrostMissileAt = Milliseconds::zero();
                     events.ScheduleEvent(EVENT_LAND, 1s);
                     return;
                 case EVENT_LAND:
