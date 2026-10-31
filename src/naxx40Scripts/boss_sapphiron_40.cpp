@@ -129,6 +129,8 @@ public:
         void Reset() override
         {
             BossAI::Reset();
+            _azBoltTargets.clear();  // AzBots: no air-phase telemetry survives a reset
+            _azFrostMissileAt = Milliseconds::zero();
             if (me->IsVisible())
             {
                 me->SetReactState(REACT_AGGRESSIVE);
@@ -204,8 +206,14 @@ public:
             if (spellInfo->Id == SPELL_ICEBOLT_CAST)
             {
                 me->CastSpell(target, SPELL_ICEBOLT_TRIGGER, true);
-                if (_azBoltsInFlight)
-                    --_azBoltsInFlight;  // AzBots: this bolt has impacted
+            }
+            // AzBots: a bolt has impacted when ITS 28522 lands on its own target (28522 travels; its splash also calls
+            // this for other targets, which do not count).
+            else if (spellInfo->Id == SPELL_ICEBOLT_TRIGGER && target)
+            {
+                auto it = std::find(_azBoltTargets.begin(), _azBoltTargets.end(), target->GetGUID());
+                if (it != _azBoltTargets.end())
+                    _azBoltTargets.erase(it);
             }
         }
 
@@ -220,7 +228,7 @@ public:
             switch (type)
             {
                 case SPELL_ICEBOLT_CAST:
-                    return (_azFrostMissileAt == Milliseconds::zero() ? iceboltCount : 0) + _azBoltsInFlight;
+                    return (_azFrostMissileAt == Milliseconds::zero() ? iceboltCount : 0) + uint32(_azBoltTargets.size());
                 case SPELL_FROST_MISSILE:
                     if (_azFrostMissileAt == Milliseconds::zero())
                         return 0;
@@ -237,7 +245,7 @@ public:
             }
         }
 
-        uint8 _azBoltsInFlight{};
+        GuidList _azBoltTargets;  // AzBots: bolts cast and not yet impacted, by target
         Milliseconds _azFrostMissileAt = Milliseconds::zero();
 
         bool IsValidExplosionTarget(WorldObject* target)
@@ -352,7 +360,7 @@ public:
                     me->HandleEmoteCommand(EMOTE_ONESHOT_LIFTOFF);
                     events.ScheduleEvent(EVENT_FLIGHT_ICEBOLT, 3s);
                     iceboltCount = 3;
-                    _azBoltsInFlight = 0;
+                    _azBoltTargets.clear();
                     _azFrostMissileAt = Milliseconds::zero();
                     return;
                 case EVENT_FLIGHT_ICEBOLT:
@@ -395,7 +403,7 @@ public:
                             auto itr = targets.begin();
                             advance(itr, urand(0, targets.size() - 1));
                             me->CastSpell(*itr, SPELL_ICEBOLT_CAST, false);
-                            ++_azBoltsInFlight;
+                            _azBoltTargets.push_back((*itr)->GetGUID());
                             blockList.push_back((*itr)->GetGUID());
                             currentTarget = (*itr)->GetGUID();
                             --iceboltCount;
@@ -412,6 +420,12 @@ public:
                     Talk(EMOTE_BREATH);
                     me->CastSpell(me, SPELL_FROST_MISSILE, false);
                     _azFrostMissileAt = GameTime::GetGameTimeMS();
+                    // AzBots: a bolt whose target has died or vanished can no longer land: retired explicitly.
+                    _azBoltTargets.remove_if([this](ObjectGuid const& g)
+                    {
+                        Unit* u = ObjectAccessor::GetUnit(*me, g);
+                        return !u || !u->IsAlive() || !u->IsInWorld();
+                    });
                     events.ScheduleEvent(EVENT_FLIGHT_SPELL_EXPLOSION, 8500ms);
                     return;
                 case EVENT_FLIGHT_SPELL_EXPLOSION:
@@ -431,7 +445,7 @@ public:
                     }
                     blockList.clear();
                     me->RemoveAllGameObjects();
-                    _azBoltsInFlight = 0;
+                    _azBoltTargets.clear();
                     _azFrostMissileAt = Milliseconds::zero();
                     events.ScheduleEvent(EVENT_LAND, 1s);
                     return;
